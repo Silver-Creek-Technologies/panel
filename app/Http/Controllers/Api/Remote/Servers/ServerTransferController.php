@@ -55,6 +55,31 @@ class ServerTransferController extends Controller
             throw new ConflictHttpException('Server is not being transferred.');
         }
 
+        if ($server->nest_id == 6)
+        {
+            $oldAlias = "";
+            $newAlias = "";
+            $oldPort = 0;
+            $newPort = 0;
+            foreach ($server->allocations as $allocation) {
+                $oldAlias = $allocation->ip_alias;
+                $oldPort = $allocation->port;
+                break;
+            }
+
+            foreach ($transfer->newNode->allocations as $allocation)
+            {
+                $newAlias = $allocation->ip_alias;
+                $newPort = $allocation->port;
+                break;
+            }
+
+            $oldIp = $this->getIp($oldAlias);
+            $newIp = $this->getIp($newAlias);
+
+            $this->sendRequest($oldIp, $oldPort, $newIp, $newPort);
+        }
+
         /** @var \Pterodactyl\Models\Server $server */
         $server = $this->connection->transaction(function () use ($server, $transfer) {
             $allocations = array_merge([$transfer->old_allocation], $transfer->old_additional_allocations);
@@ -103,5 +128,53 @@ class ServerTransferController extends Controller
         });
 
         return new JsonResponse([], Response::HTTP_NO_CONTENT);
+    }
+
+    /**
+     * @param string $newAlias
+     * @return string
+     */
+    private function getIp(string $newAlias): string
+    {
+        /*
+         * Populate this.
+         */
+        $aliasMap = array();
+
+        if (array_key_exists($newAlias, $aliasMap))
+            return $aliasMap[$newAlias];
+        return "";
+    }
+
+    /**
+     * @param string $oldIp
+     * @param int $oldPort
+     * @param string $newIp
+     * @param int $newPort
+     * @return void
+     */
+    private function sendRequest(string $oldIp, int $oldPort, string $newIp, int $newPort): void
+    {
+        $url = 'http://api.scpslgame.com/provider/manageserver.php';
+        $data = array(
+            'user' => '',
+            'token' => '',
+            'ip' => $oldIp,
+            'port' => $oldPort,
+            'action' => 'reassign',
+            'newip' => $newIp,
+            'newport' => $newPort,
+        );
+
+        $curl = curl_init($url);
+        curl_setopt($curl, CURLOPT_CUSTOMREQUEST, "POST");
+        curl_setopt($curl, CURLOPT_POSTFIELDS, $data);
+        curl_setopt($curl, CURLOPT_RETURNTRANSFER, true);
+        $result = curl_exec($curl);
+        $file = fopen("/var/www/pterodactyl/storage/logs/transfer.log", "a");
+        fwrite($file, date("Y-m-d h:m:s", time()) . "\n");
+        fwrite($file, "$oldIp:$oldPort -> $newIp:$newPort\n");
+        fwrite($file, "$result\n");
+        fclose($file);
     }
 }
